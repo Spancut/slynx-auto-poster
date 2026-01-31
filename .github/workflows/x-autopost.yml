@@ -3,13 +3,13 @@ name: Slynx Auto Post to X
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 21 * * *"   # example: 9pm UTC
+    - cron: "0 23,11 * * *" # 10:00 and 22:00 Melbourne-ish depending on DST
 
 jobs:
   autopost:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repo
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Setup Node
@@ -17,15 +17,20 @@ jobs:
         with:
           node-version: "20"
 
-      - name: Install deps
-        run: npm install
-
-      - name: Debug file presence
+      - name: Debug files
         run: |
           pwd
           ls -la
           ls -la scripts
 
-      - name: Run autoposter
-  run: node scripts/post_to_x.js
+      - name: Install deps
+        run: npm install
 
+      - name: Run autoposter
+        env:
+          # Put your real secret names here EXACTLY as they are in GitHub > Settings > Secrets
+          X_CLIENT_ID: ${{ secrets.X_CLIENT_ID }}
+          X_CLIENT_SECRET: ${{ secrets.X_CLIENT_SECRET }}
+          X_REFRESH_TOKEN: ${{ secrets.X_REFRESH_TOKEN }}
+          SHEETS_ACCESS_TOKEN: ${{ secrets.SHEETS_ACCESS_TOKEN }}
+        run: node scripts/post_to_x.js
