@@ -1,0 +1,30 @@
+name: Slynx Auto Post to X
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 21 * * *"   # example: 9pm UTC
+
+jobs:
+  autopost:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Debug file presence
+        run: |
+          pwd
+          ls -la
+          ls -la scripts
+
+      - name: Run autoposter
+        run: node scripts/post_to_x.js
