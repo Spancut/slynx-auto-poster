@@ -27,4 +27,5 @@ jobs:
           ls -la scripts
 
       - name: Run autoposter
-        run: node scripts/post_to_x.js
+  run: node scripts/post_to_x.js
+
