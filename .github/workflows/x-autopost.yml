@@ -8,6 +8,7 @@ on:
 jobs:
   autopost:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -26,14 +27,16 @@ jobs:
       - name: Install deps
         run: npm install
 
-      - name: Run autoposter
-  run: node scripts/post_to_x.js
-  env:
-    GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
-    GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
-    GOOGLE_REFRESH_TOKEN: ${{ secrets.GOOGLE_REFRESH_TOKEN }}
-    GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
-    X_CLIENT_ID: ${{ secrets.X_CLIENT_ID }}
-    X_CLIENT_SECRET: ${{ secrets.X_CLIENT_SECRET }}
-    X_REFRESH_TOKEN: ${{ secrets.X_REFRESH_TOKEN }}
+      - name: Debug env presence (safe)
+        run: node -e "console.log('GOOGLE_CLIENT_ID present:', !!process.env.GOOGLE_CLIENT_ID)"
 
+      - name: Run autoposter
+        run: node scripts/post_to_x.js
+        env:
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          GOOGLE_REFRESH_TOKEN: ${{ secrets.GOOGLE_REFRESH_TOKEN }}
+          GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
+          X_CLIENT_ID: ${{ secrets.X_CLIENT_ID }}
+          X_CLIENT_SECRET: ${{ secrets.X_CLIENT_SECRET }}
+          X_REFRESH_TOKEN: ${{ secrets.X_REFRESH_TOKEN }}
