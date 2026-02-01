@@ -8,7 +8,6 @@ on:
 jobs:
   autopost:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -27,9 +26,6 @@ jobs:
       - name: Install deps
         run: npm install
 
-      - name: Debug env presence (safe)
-        run: node -e "console.log('GOOGLE_CLIENT_ID present:', !!process.env.GOOGLE_CLIENT_ID)"
-
       - name: Run autoposter
         run: node scripts/post_to_x.js
         env:
@@ -41,4 +37,3 @@ jobs:
           X_CLIENT_ID: ${{ secrets.X_CLIENT_ID }}
           X_CLIENT_SECRET: ${{ secrets.X_CLIENT_SECRET }}
           X_REFRESH_TOKEN: ${{ secrets.X_REFRESH_TOKEN }}
-
