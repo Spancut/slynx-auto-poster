@@ -3,8 +3,7 @@ name: Slynx Auto Post to X
 on:
   workflow_dispatch:
   schedule:
-    # Runs at 11:00 UTC and 23:00 UTC
-    # (≈ 10am / 10pm Melbourne depending on DST)
+    # Runs at 11:00 UTC and 23:00 UTC daily (your “2x/day” cadence)
     - cron: "0 11,23 * * *"
 
 jobs:
@@ -12,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repo
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Setup Node
@@ -20,28 +19,21 @@ jobs:
         with:
           node-version: "20"
 
-      - name: Debug file structure
-        run: |
-          pwd
-          ls -la
-          ls -la scripts
-
-      - name: Install dependencies
+      - name: Install deps
         run: npm install
 
       - name: Run autoposter
         run: node scripts/post_to_x.js
         env:
-          # ---- Google Sheets ----
+          # Google (Sheets)
           GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
           GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
           GOOGLE_REFRESH_TOKEN: ${{ secrets.GOOGLE_REFRESH_TOKEN }}
           GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
           GOOGLE_SHEET_TAB: ${{ secrets.GOOGLE_SHEET_TAB }}
 
-          # ---- X / Twitter ----
-          X_CLIENT_ID: ${{ secrets.X_CLIENT_ID }}
-          X_CLIENT_SECRET: ${{ secrets.X_CLIENT_SECRET }}
-          X_REFRESH_TOKEN: ${{ secrets.X_REFRESH_TOKEN }}
+          # X (OAuth 1.0a user context)
           X_API_KEY: ${{ secrets.X_API_KEY }}
           X_API_SECRET: ${{ secrets.X_API_SECRET }}
+          X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
+          X_ACCESS_SECRET: ${{ secrets.X_ACCESS_SECRET }}
