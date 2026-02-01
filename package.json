@@ -1,9 +1,10 @@
 {
-  "name": "slynx-x-autoposter",
+  "name": "slynx-auto-poster",
   "version": "1.0.0",
   "type": "module",
+  "private": true,
   "dependencies": {
-    "googleapis": "^144.0.0",
-    "twitter-api-v2": "^1.17.2"
+    "googleapis": "^140.0.0",
+    "oauth-1.0a": "^2.2.6"
   }
 }
