@@ -27,10 +27,13 @@ jobs:
         run: npm install
 
       - name: Run autoposter
-        env:
-          # Put your real secret names here EXACTLY as they are in GitHub > Settings > Secrets
-          X_CLIENT_ID: ${{ secrets.X_CLIENT_ID }}
-          X_CLIENT_SECRET: ${{ secrets.X_CLIENT_SECRET }}
-          X_REFRESH_TOKEN: ${{ secrets.X_REFRESH_TOKEN }}
-          SHEETS_ACCESS_TOKEN: ${{ secrets.SHEETS_ACCESS_TOKEN }}
-        run: node scripts/post_to_x.js
+  run: node scripts/post_to_x.js
+  env:
+    GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+    GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+    GOOGLE_REFRESH_TOKEN: ${{ secrets.GOOGLE_REFRESH_TOKEN }}
+    GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
+    X_CLIENT_ID: ${{ secrets.X_CLIENT_ID }}
+    X_CLIENT_SECRET: ${{ secrets.X_CLIENT_SECRET }}
+    X_REFRESH_TOKEN: ${{ secrets.X_REFRESH_TOKEN }}
+
