@@ -3,11 +3,13 @@ name: Slynx Auto Post to X
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 23,11 * * *" # 10:00 and 22:00 Melbourne-ish depending on DST
+    # Runs at 23:00 UTC and 11:00 UTC daily (≈ 10am/10pm Melbourne depending on DST)
+    - cron: "0 23,11 * * *"
 
 jobs:
   autopost:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -16,67 +18,64 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "20"
+          cache: "npm"
 
-      - name: Debug files
+      # ✅ Debug repo structure (no secrets)
+      - name: Debug repo structure
         run: |
+          echo "PWD:"
           pwd
+          echo "ROOT:"
           ls -la
-          ls -la scripts
+          echo "SCRIPTS:"
+          ls -la scripts || true
+          echo "WORKFLOWS:"
+          ls -la .github/workflows || true
 
+      # ✅ Install dependencies (works even without package-lock.json)
       - name: Install deps
         run: npm install
 
+      # ✅ Fail fast if any required env vars are missing (no secret values printed)
       - name: Validate required environment variables
-        shell: bash
+        run: |
+          node -e "
+          const required = [
+            'GOOGLE_CLIENT_ID',
+            'GOOGLE_CLIENT_SECRET',
+            'GOOGLE_REFRESH_TOKEN',
+            'GOOGLE_SHEET_ID',
+            'GOOGLE_SHEET_TAB',
+
+            'X_API_KEY',
+            'X_API_SECRET',
+
+            'X_CLIENT_ID',
+            'X_CLIENT_SECRET',
+            'X_REFRESH_TOKEN'
+          ];
+          const missing = required.filter(k => !process.env[k] || String(process.env[k]).trim() === '');
+          if (missing.length) {
+            console.error('Missing env vars:', missing.join(', '));
+            process.exit(1);
+          }
+          console.log('All required env vars present ✅');
+          "
         env:
           GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
           GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
           GOOGLE_REFRESH_TOKEN: ${{ secrets.GOOGLE_REFRESH_TOKEN }}
           GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
           GOOGLE_SHEET_TAB: ${{ secrets.GOOGLE_SHEET_TAB }}
+
           X_API_KEY: ${{ secrets.X_API_KEY }}
+          X_API_SECRET: ${{ secrets.X_API_SECRET }}
+
           X_CLIENT_ID: ${{ secrets.X_CLIENT_ID }}
           X_CLIENT_SECRET: ${{ secrets.X_CLIENT_SECRET }}
           X_REFRESH_TOKEN: ${{ secrets.X_REFRESH_TOKEN }}
-        run: |
-          missing=0
 
-          req_vars=(
-            "GOOGLE_CLIENT_ID"
-            "GOOGLE_CLIENT_SECRET"
-            "GOOGLE_REFRESH_TOKEN"
-            "GOOGLE_SHEET_ID"
-            "GOOGLE_SHEET_TAB"
-            "X_API_KEY"
-          )
-
-          # Optional (only required if your script actually uses OAuth refresh for posting)
-          opt_vars=(
-            "X_CLIENT_ID"
-            "X_CLIENT_SECRET"
-            "X_REFRESH_TOKEN"
-          )
-
-          echo "Checking required vars..."
-          for v in "${req_vars[@]}"; do
-            if [ -z "${!v}" ]; then
-              echo "::error::Missing required secret/env: $v"
-              missing=1
-            fi
-          done
-
-          echo "Checking optional vars (won't fail job)..."
-          for v in "${opt_vars[@]}"; do
-            if [ -z "${!v}" ]; then
-              echo "::warning::Optional env not set: $v"
-            fi
-          done
-
-          if [ "$missing" -ne 0 ]; then
-            echo "::error::One or more REQUIRED secrets are missing. Add them in Repo Settings → Secrets and variables → Actions."
-            exit 1
-          fi
-
+      # ✅ Run the autoposter
       - name: Run autoposter
         run: node scripts/post_to_x.js
         env:
@@ -87,6 +86,8 @@ jobs:
           GOOGLE_SHEET_TAB: ${{ secrets.GOOGLE_SHEET_TAB }}
 
           X_API_KEY: ${{ secrets.X_API_KEY }}
+          X_API_SECRET: ${{ secrets.X_API_SECRET }}
+
           X_CLIENT_ID: ${{ secrets.X_CLIENT_ID }}
           X_CLIENT_SECRET: ${{ secrets.X_CLIENT_SECRET }}
           X_REFRESH_TOKEN: ${{ secrets.X_REFRESH_TOKEN }}
