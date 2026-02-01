@@ -33,13 +33,12 @@ jobs:
       - name: Run autoposter
         run: node scripts/post_to_x.js
         env:
-          env:
-            GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
-            GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
-            GOOGLE_REFRESH_TOKEN: ${{ secrets.GOOGLE_REFRESH_TOKEN }}
-            GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
-            GOOGLE_SHEET_TAB: ${{ secrets.GOOGLE_SHEET_TAB }}
-            X_CLIENT_ID: ${{ secrets.X_CLIENT_ID }}
-            X_CLIENT_SECRET: ${{ secrets.X_CLIENT_SECRET }}
-            X_REFRESH_TOKEN: ${{ secrets.X_REFRESH_TOKEN }}
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          GOOGLE_REFRESH_TOKEN: ${{ secrets.GOOGLE_REFRESH_TOKEN }}
+          GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
+          GOOGLE_SHEET_TAB: ${{ secrets.GOOGLE_SHEET_TAB }}
+          X_CLIENT_ID: ${{ secrets.X_CLIENT_ID }}
+          X_CLIENT_SECRET: ${{ secrets.X_CLIENT_SECRET }}
+          X_REFRESH_TOKEN: ${{ secrets.X_REFRESH_TOKEN }}
 
