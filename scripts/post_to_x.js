@@ -1,227 +1,334 @@
+// scripts/post_to_x.js
+// Node 20+ (ESM). Posts the next due "Pending" row from Google Sheets to X, then marks it as Posted.
+
 import crypto from "crypto";
-import OAuth from "oauth-1.0a";
 import { google } from "googleapis";
 
+// -----------------------
+// Env helpers
+// -----------------------
 function mustEnv(name) {
   const v = process.env[name];
-  if (!v) throw new Error(`Missing env var: ${name}`);
-  return v;
+  if (!v || !String(v).trim()) throw new Error(`Missing env var: ${name}`);
+  return String(v).trim();
 }
 
-const ENV = {
-  // Google
-  GOOGLE_CLIENT_ID: mustEnv("GOOGLE_CLIENT_ID"),
-  GOOGLE_CLIENT_SECRET: mustEnv("GOOGLE_CLIENT_SECRET"),
-  GOOGLE_REFRESH_TOKEN: mustEnv("GOOGLE_REFRESH_TOKEN"),
-  GOOGLE_SHEET_ID: mustEnv("GOOGLE_SHEET_ID"),
-  GOOGLE_SHEET_TAB: mustEnv("GOOGLE_SHEET_TAB"),
-
-  // X OAuth 1.0a
-  X_API_KEY: mustEnv("X_API_KEY"),
-  X_API_SECRET: mustEnv("X_API_SECRET"),
-  X_ACCESS_TOKEN: mustEnv("X_ACCESS_TOKEN"),
-  X_ACCESS_SECRET: mustEnv("X_ACCESS_SECRET"),
-};
-
-function toIsoUtc(d) {
-  return new Date(d).toISOString();
+function optEnv(name, def = "") {
+  const v = process.env[name];
+  return v == null ? def : String(v);
 }
 
-// Parse sheet date/time into a UTC Date.
-// Expect Publish Date like: 2026-01-31
-// Expect Time (UTC) like: 20:05  (24h)
-function parseUtcDateTime(publishDate, timeUtc) {
-  const dateStr = String(publishDate).trim();
-  const timeStr = String(timeUtc).trim();
+const DRY_RUN = ["1", "true", "yes"].includes(optEnv("DRY_RUN", "").toLowerCase());
 
-  // Build ISO like: 2026-01-31T20:05:00Z
-  const iso = `${dateStr}T${timeStr}:00Z`;
-  const dt = new Date(iso);
-  if (Number.isNaN(dt.getTime())) {
-    throw new Error(`Invalid date/time from sheet: Publish Date="${dateStr}", Time (UTC)="${timeStr}" -> "${iso}"`);
-  }
-  return dt;
+// -----------------------
+// Google Sheets helpers
+// -----------------------
+function safeSheetTab(tabName) {
+  const raw = String(tabName || "").trim();
+  if (!raw) throw new Error("Missing env var: GOOGLE_SHEET_TAB");
+
+  // Quote tab name if it contains spaces or special chars
+  const needsQuotes = /[^A-Za-z0-9_]/.test(raw);
+  if (!needsQuotes) return raw;
+
+  // Sheets escapes single quotes by doubling them inside quoted sheet names
+  const escaped = raw.replace(/'/g, "''");
+  return `'${escaped}'`;
 }
 
 async function getSheetsClient() {
-  const oauth2 = new google.auth.OAuth2(
-    ENV.GOOGLE_CLIENT_ID,
-    ENV.GOOGLE_CLIENT_SECRET,
-    "urn:ietf:wg:oauth:2.0:oob"
-  );
+  const clientId = mustEnv("GOOGLE_CLIENT_ID");
+  const clientSecret = mustEnv("GOOGLE_CLIENT_SECRET");
+  const refreshToken = mustEnv("GOOGLE_REFRESH_TOKEN");
 
-  oauth2.setCredentials({ refresh_token: ENV.GOOGLE_REFRESH_TOKEN });
+  const oAuth2Client = new google.auth.OAuth2(clientId, clientSecret);
+  oAuth2Client.setCredentials({ refresh_token: refreshToken });
 
-  // Force refresh so we know it works
-  await oauth2.getAccessToken();
-
-  return google.sheets({ version: "v4", auth: oauth2 });
+  return google.sheets({ version: "v4", auth: oAuth2Client });
 }
 
-async function fetchRows(sheets) {
-  // We read the whole tab. (30 rows is tiny, this is fine.)
-  const range = `${ENV.GOOGLE_SHEET_TAB}!A:Z`;
-  const res = await sheets.spreadsheets.values.get({
-    spreadsheetId: ENV.GOOGLE_SHEET_ID,
+function parseSheet(rows) {
+  // rows is values[][] where first row is header
+  if (!rows || rows.length < 2) return { header: [], items: [] };
+  const header = rows[0].map((h) => String(h || "").trim());
+  const items = [];
+
+  for (let r = 1; r < rows.length; r++) {
+    const row = rows[r];
+    const obj = {};
+    for (let c = 0; c < header.length; c++) {
+      obj[header[c]] = row[c] ?? "";
+    }
+    obj.__rowIndex1 = r + 1; // 1-based in sheet (header is row 1)
+    items.push(obj);
+  }
+
+  return { header, items };
+}
+
+function findHeaderIndex(header, name) {
+  const idx = header.findIndex((h) => h.toLowerCase() === name.toLowerCase());
+  return idx >= 0 ? idx : -1;
+}
+
+function toIsoUtcFromColumns(publishDate, timeUtc) {
+  // publishDate expected like "2026-01-31"
+  // timeUtc expected like "20:05" or "20:05:00"
+  const d = String(publishDate || "").trim();
+  const t = String(timeUtc || "").trim();
+
+  if (!d || !t) return null;
+
+  // Normalize time
+  const parts = t.split(":").map((x) => x.trim());
+  if (parts.length < 2) return null;
+  const hh = parts[0].padStart(2, "0");
+  const mm = parts[1].padStart(2, "0");
+  const ss = (parts[2] ?? "00").padStart(2, "0");
+
+  // Build UTC ISO
+  // Example: 2026-01-31T20:05:00Z
+  return `${d}T${hh}:${mm}:${ss}Z`;
+}
+
+function nowUtcIso() {
+  return new Date().toISOString();
+}
+
+function isDue(item, header) {
+  const publishDateKey = header.find((h) => h.toLowerCase() === "publish date");
+  const timeKey = header.find((h) => h.toLowerCase() === "time (utc)") || header.find((h) => h.toLowerCase() === "time utc");
+  const statusKey = header.find((h) => h.toLowerCase() === "status");
+  const postTextKey = header.find((h) => h.toLowerCase() === "post text");
+
+  const publishDate = publishDateKey ? item[publishDateKey] : "";
+  const timeUtc = timeKey ? item[timeKey] : "";
+  const status = statusKey ? String(item[statusKey] || "").trim() : "";
+  const postText = postTextKey ? String(item[postTextKey] || "").trim() : "";
+
+  if (!postText) return false;
+  if (status.toLowerCase() !== "pending") return false;
+
+  const iso = toIsoUtcFromColumns(publishDate, timeUtc);
+  if (!iso) return false;
+
+  const scheduled = new Date(iso).getTime();
+  const now = Date.now();
+  return scheduled <= now;
+}
+
+// -----------------------
+// OAuth 1.0a for X
+// -----------------------
+function percentEncode(str) {
+  return encodeURIComponent(str)
+    .replace(/[!'()*]/g, (c) => "%" + c.charCodeAt(0).toString(16).toUpperCase());
+}
+
+function buildOAuth1Header({ method, url, consumerKey, consumerSecret, token, tokenSecret, extraParams = {} }) {
+  const oauthParams = {
+    oauth_consumer_key: consumerKey,
+    oauth_nonce: crypto.randomBytes(16).toString("hex"),
+    oauth_signature_method: "HMAC-SHA1",
+    oauth_timestamp: Math.floor(Date.now() / 1000).toString(),
+    oauth_token: token,
+    oauth_version: "1.0",
+    ...extraParams,
+  };
+
+  // Parse query params from URL
+  const u = new URL(url);
+  const baseUrl = `${u.origin}${u.pathname}`;
+  const queryParams = {};
+  u.searchParams.forEach((value, key) => {
+    queryParams[key] = value;
+  });
+
+  // Only include query + oauth params (JSON body not included in OAuth1 signature base string)
+  const allParams = { ...queryParams, ...oauthParams };
+  const paramPairs = Object.keys(allParams)
+    .sort()
+    .map((k) => `${percentEncode(k)}=${percentEncode(allParams[k])}`)
+    .join("&");
+
+  const baseString = [
+    method.toUpperCase(),
+    percentEncode(baseUrl),
+    percentEncode(paramPairs),
+  ].join("&");
+
+  const signingKey = `${percentEncode(consumerSecret)}&${percentEncode(tokenSecret)}`;
+  const signature = crypto.createHmac("sha1", signingKey).update(baseString).digest("base64");
+
+  oauthParams.oauth_signature = signature;
+
+  const header = "OAuth " + Object.keys(oauthParams)
+    .sort()
+    .map((k) => `${percentEncode(k)}="${percentEncode(oauthParams[k])}"`)
+    .join(", ");
+
+  return header;
+}
+
+async function postToX(text) {
+  const X_API_KEY = mustEnv("X_API_KEY");
+  const X_API_SECRET = mustEnv("X_API_SECRET");
+  const X_ACCESS_TOKEN = mustEnv("X_ACCESS_TOKEN");
+  const X_ACCESS_SECRET = mustEnv("X_ACCESS_SECRET");
+
+  // X API v2 endpoint
+  const url = "https://api.twitter.com/2/tweets";
+  const method = "POST";
+
+  const authHeader = buildOAuth1Header({
+    method,
+    url,
+    consumerKey: X_API_KEY,
+    consumerSecret: X_API_SECRET,
+    token: X_ACCESS_TOKEN,
+    tokenSecret: X_ACCESS_SECRET,
+  });
+
+  const res = await fetch(url, {
+    method,
+    headers: {
+      Authorization: authHeader,
+      "Content-Type": "application/json",
+      "User-Agent": "slynx-autoposter/1.0",
+    },
+    body: JSON.stringify({ text }),
+  });
+
+  const body = await res.text();
+  if (!res.ok) {
+    throw new Error(`X post failed (${res.status}): ${body}`);
+  }
+  return JSON.parse(body);
+}
+
+// -----------------------
+// Main flow
+// -----------------------
+async function fetchRows(sheets, spreadsheetId, tab) {
+  const range = `${safeSheetTab(tab)}!A:Z`;
+  const resp = await sheets.spreadsheets.values.get({
+    spreadsheetId,
     range,
   });
 
-  const values = res.data.values || [];
-  if (values.length < 2) return { headers: [], rows: [] };
-
-  const headers = values[0].map((h) => String(h).trim());
-  const rows = values.slice(1);
-
-  return { headers, rows };
+  return resp.data.values || [];
 }
 
-function headerIndex(headers, name) {
-  const idx = headers.findIndex((h) => h.toLowerCase() === name.toLowerCase());
-  if (idx === -1) throw new Error(`Missing required column in sheet header: "${name}"`);
-  return idx;
-}
+async function updateRow(sheets, spreadsheetId, tab, header, item, updates) {
+  // updates: { "Status": "Posted", "Posted At (UTC)": "..." }
+  // We update by writing the whole row values for safety.
+  const rowIndex1 = item.__rowIndex1; // 1-based row number
+  const range = `${safeSheetTab(tab)}!A${rowIndex1}:Z${rowIndex1}`;
 
-async function updateRow(sheets, rowNumber1Based, headers, updatesObj) {
-  // We update by writing back the whole row (safe + simple)
-  const { headers: _h, rows } = await fetchRows(sheets);
+  // Build a row array matching header length (A..)
+  const existingRow = header.map((h) => item[h] ?? "");
+  const outRow = [...existingRow];
 
-  // rowNumber1Based includes header row as row 1 in Google Sheets UI
-  // Our data rows start at row 2.
-  const dataIndex = rowNumber1Based - 2;
-  if (dataIndex < 0 || dataIndex >= rows.length) {
-    throw new Error(`Row number out of range: ${rowNumber1Based}`);
+  for (const [key, val] of Object.entries(updates)) {
+    const idx = findHeaderIndex(header, key);
+    if (idx >= 0) outRow[idx] = val;
   }
-
-  const row = rows[dataIndex].slice(); // copy
-
-  for (const [key, val] of Object.entries(updatesObj)) {
-    const idx = headerIndex(headers, key);
-    row[idx] = val;
-  }
-
-  // Write back the row range like: Posts!A5:Z5
-  const startCol = "A";
-  const endCol = String.fromCharCode("A".charCodeAt(0) + Math.min(headers.length - 1, 25)); // up to Z
-  const range = `${ENV.GOOGLE_SHEET_TAB}!${startCol}${rowNumber1Based}:${endCol}${rowNumber1Based}`;
 
   await sheets.spreadsheets.values.update({
-    spreadsheetId: ENV.GOOGLE_SHEET_ID,
+    spreadsheetId,
     range,
     valueInputOption: "RAW",
-    requestBody: { values: [row.slice(0, headers.length)] },
-  });
-}
-
-function buildOAuth() {
-  return new OAuth({
-    consumer: { key: ENV.X_API_KEY, secret: ENV.X_API_SECRET },
-    signature_method: "HMAC-SHA1",
-    hash_function(base_string, key) {
-      return crypto.createHmac("sha1", key).update(base_string).digest("base64");
+    requestBody: {
+      values: [outRow],
     },
   });
 }
 
-async function postToX(statusText) {
-  // X v2 create tweet endpoint
-  const url = "https://api.x.com/2/tweets";
-  const method = "POST";
-  const body = { text: statusText };
-
-  const oauth = buildOAuth();
-  const authData = oauth.authorize(
-    { url, method },
-    { key: ENV.X_ACCESS_TOKEN, secret: ENV.X_ACCESS_SECRET }
-  );
-
-  const headers = {
-    ...oauth.toHeader(authData),
-    "Content-Type": "application/json",
-  };
-
-  const resp = await fetch(url, {
-    method,
-    headers,
-    body: JSON.stringify(body),
-  });
-
-  const json = await resp.json().catch(() => ({}));
-
-  if (!resp.ok) {
-    throw new Error(`X post failed (${resp.status}): ${JSON.stringify(json)}`);
-  }
-
-  const tweetId = json?.data?.id;
-  if (!tweetId) throw new Error(`X post succeeded but no tweet id returned: ${JSON.stringify(json)}`);
-
-  return tweetId;
-}
-
 async function main() {
-  const now = new Date(); // UTC internally
+  const GOOGLE_SHEET_ID = mustEnv("GOOGLE_SHEET_ID");
+  const GOOGLE_SHEET_TAB = mustEnv("GOOGLE_SHEET_TAB");
 
   const sheets = await getSheetsClient();
-  const { headers, rows } = await fetchRows(sheets);
-  if (!headers.length) {
-    console.log("No rows found.");
+
+  const values = await fetchRows(sheets, GOOGLE_SHEET_ID, GOOGLE_SHEET_TAB);
+  const { header, items } = parseSheet(values);
+
+  if (!header.length) {
+    console.log("Sheet appears empty (no header row). Nothing to do.");
     return;
   }
 
-  const iPublishDate = headerIndex(headers, "Publish Date");
-  const iTimeUtc = headerIndex(headers, "Time (UTC)");
-  const iPostText = headerIndex(headers, "Post Text");
-  const iStatus = headerIndex(headers, "Status");
+  // Find due rows, oldest first by scheduled datetime
+  const due = items
+    .map((it) => {
+      const publishDateKey = header.find((h) => h.toLowerCase() === "publish date");
+      const timeKey = header.find((h) => h.toLowerCase() === "time (utc)") || header.find((h) => h.toLowerCase() === "time utc");
+      const iso = toIsoUtcFromColumns(
+        publishDateKey ? it[publishDateKey] : "",
+        timeKey ? it[timeKey] : ""
+      );
+      return { it, iso };
+    })
+    .filter(({ it, iso }) => iso && isDue(it, header))
+    .sort((a, b) => new Date(a.iso).getTime() - new Date(b.iso).getTime());
 
-  // Optional columns (we’ll write them if they exist)
-  const iTweetId = headers.findIndex((h) => h.toLowerCase() === "tweet_id");
-  const iPostedAt = headers.findIndex((h) => h.toLowerCase() === "posted_at");
+  if (!due.length) {
+    console.log("No due Pending posts right now. (UTC now:", nowUtcIso(), ")");
+    return;
+  }
 
-  // Find first due post
-  let picked = null;
+  const next = due[0].it;
 
-  for (let r = 0; r < rows.length; r++) {
-    const row = rows[r];
+  const postTextKey = header.find((h) => h.toLowerCase() === "post text");
+  const statusKey = header.find((h) => h.toLowerCase() === "status");
+  const idKey = header.find((h) => h.toLowerCase() === "id");
+  const imageUrlKey = header.find((h) => h.toLowerCase() === "image url");
 
-    const status = String(row[iStatus] ?? "").trim();
-    if (status.toLowerCase() !== "pending") continue;
+  const text = postTextKey ? String(next[postTextKey] || "").trim() : "";
+  const idVal = idKey ? String(next[idKey] || "").trim() : "";
+  const imageUrl = imageUrlKey ? String(next[imageUrlKey] || "").trim() : "";
 
-    const publishDate = row[iPublishDate];
-    const timeUtc = row[iTimeUtc];
-    const postText = String(row[iPostText] ?? "").trim();
-    if (!postText) continue;
+  if (!text) {
+    console.log("Next due row has empty Post Text. Skipping.");
+    return;
+  }
 
-    const scheduled = parseUtcDateTime(publishDate, timeUtc);
+  // If you want image support later, this is where we'd add v1.1 media upload.
+  // For now, we post text only. If Image URL exists, we append it (optional).
+  const finalText = imageUrl ? `${text}\n\n${imageUrl}` : text;
 
-    if (scheduled <= now) {
-      // Google sheet row number in UI = r + 2 (because headers are row 1)
-      picked = { r, rowNumber: r + 2, postText, scheduled };
-      break;
+  console.log(`Posting row ${next.__rowIndex1}${idVal ? ` (id=${idVal})` : ""} to X...`);
+  if (DRY_RUN) {
+    console.log("[DRY_RUN] Would post:", finalText);
+  } else {
+    const result = await postToX(finalText);
+    console.log("Posted to X:", result?.data?.id || "(no id returned)");
+  }
+
+  // Update status
+  if (statusKey) {
+    const updates = {
+      Status: "Posted",
+    };
+
+    // Only write Posted At if column exists
+    if (findHeaderIndex(header, "Posted At (UTC)") >= 0) {
+      updates["Posted At (UTC)"] = nowUtcIso();
     }
+
+    if (!DRY_RUN) {
+      await updateRow(sheets, GOOGLE_SHEET_ID, GOOGLE_SHEET_TAB, header, next, updates);
+      console.log("Sheet updated: Status=Posted");
+    } else {
+      console.log("[DRY_RUN] Would update sheet: Status=Posted");
+    }
+  } else {
+    console.log("No 'Status' column found; skipping update.");
   }
-
-  if (!picked) {
-    console.log(`No Pending posts due yet. Now (UTC): ${toIsoUtc(now)}`);
-    return;
-  }
-
-  console.log(`Posting row ${picked.rowNumber} scheduled ${toIsoUtc(picked.scheduled)}:`);
-  console.log(picked.postText);
-
-  const tweetId = await postToX(picked.postText);
-
-  const updates = {
-    Status: "Posted",
-  };
-
-  if (iTweetId !== -1) updates["tweet_id"] = tweetId;
-  if (iPostedAt !== -1) updates["posted_at"] = toIsoUtc(new Date());
-
-  await updateRow(sheets, picked.rowNumber, headers, updates);
-
-  console.log(`Posted successfully. tweet_id=${tweetId}`);
 }
 
 main().catch((err) => {
-  console.error(err);
+  // Don’t leak secrets; print clean error
+  console.error("Fatal error:", err?.message || err);
   process.exit(1);
 });
