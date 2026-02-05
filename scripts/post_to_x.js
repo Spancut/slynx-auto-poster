@@ -89,8 +89,8 @@ async function fetchRows() {
 async function postToX({ text }) {
   // Replace this with your actual X posting logic already in your repo.
   // This is just a placeholder so the file is syntactically complete.
-  if (!text || !String(text).trim()) return { ok: false, reason: "empty text" };
-  return { ok: true, id: "dummy" };
+ const text = String(row["Post Text"] || "").trim();
+ if (!text) throw new Error(`Row ${rowNumber} has empty Post Text`);
 }
 
 // ---------- main ----------
